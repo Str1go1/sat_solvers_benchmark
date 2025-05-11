@@ -14,42 +14,42 @@ def resolution_solver(clauses):
     processed_clauses = []
     for c in clauses:
         clause_set = set(c)
-        is_tautology = False
-        for l in list(clause_set):
-            if -l in clause_set:
-                is_tautology = True
-                break
-        if not is_tautology:
-            processed_clauses.append(clause_set)
-    
+        if any(-l in clause_set for l in clause_set):
+            continue  # Skip tautologies
+        processed_clauses.append(clause_set)
+
     clauses = processed_clauses
     if set() in clauses:
         return False
     if not clauses:
         return True
-    
-    new_clauses = True
-    while new_clauses:
-        new_clauses = False
-        for Ci in clauses:
-            for Cj in clauses:
+
+    known_clauses = set(frozenset(c) for c in clauses)
+    new_pairs = True
+
+    while new_pairs:
+        new_pairs = False
+        new_resolvents = set()
+
+        clause_list = list(known_clauses)
+        for i in range(len(clause_list)):
+            for j in range(i + 1, len(clause_list)):
+                Ci, Cj = clause_list[i], clause_list[j]
                 for l in Ci:
                     if -l in Cj:
                         resolvent = (Ci | Cj) - {l, -l}
-                        is_tautology = False
-                        for lit in list(resolvent):
-                            if -lit in resolvent:
-                                is_tautology = True
-                                break
-                        
-                        if is_tautology:
+                        if any(-lit in resolvent for lit in resolvent):
                             continue
-                        
-                        if len(resolvent) == 0:
+                        if not resolvent:
                             return False
-                        if resolvent not in clauses:
-                            clauses.append(resolvent)
-                            new_clauses = True
+                        resolvent_frozen = frozenset(resolvent)
+                        if resolvent_frozen not in known_clauses:
+                            new_resolvents.add(resolvent_frozen)
+
+        if new_resolvents:
+            known_clauses.update(new_resolvents)
+            new_pairs = True
+
     return True
 
 #2 dp alogorithm
@@ -92,21 +92,19 @@ def pure_literal_assign(clauses):
     return clauses, assignment
 
 def dp_solver(clauses):
-    processed_clauses = []
-    for c in clauses:
-        clause_set = set(c)
-        is_tautology = False
-        for l in list(clause_set):
-            if -l in clause_set:
-                is_tautology = True
-                break
-        if not is_tautology:
-            processed_clauses.append(clause_set)
-    
-    clauses = processed_clauses
+    def preprocess(clauses):
+        processed = []
+        for c in clauses:
+            s = set(c)
+            if not any(-l in s for l in s):
+                processed.append(s)
+        return processed
+
+    clauses = preprocess(clauses)
+
     if not clauses:
         return True
-        
+
     result = unit_propagate(clauses)
     if result is None:
         return False
@@ -116,36 +114,36 @@ def dp_solver(clauses):
     if not clauses:
         return True
 
-    all_lits = {lit for c in clauses for lit in c}
-    pivot = None
-    for lit in all_lits:
-        if -lit in all_lits:
-            pivot = abs(lit)
-            break
-    if pivot is None:
-        return True
+    all_literals = {lit for c in clauses for lit in c}
+    pivots = {abs(l) for l in all_literals if -l in all_literals}
+    if not pivots:
+        return all(len(c) > 0 for c in clauses)
+
+    pivot = next(iter(pivots))
 
     pos_clauses = [c for c in clauses if pivot in c]
     neg_clauses = [c for c in clauses if -pivot in c]
     other_clauses = [c for c in clauses if pivot not in c and -pivot not in c]
+
     new_clauses = []
     for c in pos_clauses:
         for d in neg_clauses:
             resolvent = (c | d) - {pivot, -pivot}
-            is_tautology = False
-            for lit in list(resolvent):
-                if -lit in resolvent:
-                    is_tautology = True
-                    break
-            if is_tautology:
-                continue
-                
+            if any(-lit in resolvent for lit in resolvent):
+                continue 
             if len(resolvent) == 0:
                 return False
             new_clauses.append(resolvent)
+        # Avoid clause duplication
+    all_clauses = {frozenset(c) for c in other_clauses}
+    for nc in new_clauses:
+        frozen = frozenset(nc)
+        if frozen not in all_clauses:
+            all_clauses.add(frozen)
 
-    new_formula = other_clauses + new_clauses
-    return dp_solver(new_formula)
+    return dp_solver([set(c) for c in all_clauses])
+
+
 #dpll algorithm
 def dpll(clauses, assignment=None):
     if assignment is None:
@@ -233,8 +231,8 @@ def benchmark_algorithms_threaded():
         if benchmark_running:
             output_box.after(0, output_box.insert, tk.END, text)
 
-    output_box.after(0, output_box.delete, 1.0, tk.END)
-    sizes = [4,6,8,10]
+    #output_box.after(0, output_box.delete, 1.0, tk.END)
+    sizes = [4,6,8,10,12,14,16,18,20]
     algorithms = {
         "Resolution": resolution_solver,
         "DP": dp_solver,
@@ -253,6 +251,9 @@ def benchmark_algorithms_threaded():
         for name, solver in algorithms.items():
             if not benchmark_running:
                 break
+            if name == "Resolution" and n > 8:
+                safe_insert(f"{name:10} | Skipped (n > 8)\n")
+                continue
                 
             tracemalloc_started = False
             try:
